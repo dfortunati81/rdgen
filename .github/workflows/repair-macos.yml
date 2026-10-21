@@ -1,0 +1,96 @@
+name: Repair AJW macOS support configuration
+run-name: Repair AJW macOS support configuration
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  setup:
+    uses: ./.github/workflows/fetch-encrypted-secrets.yml
+    secrets: inherit
+  repair:
+    needs: setup
+    runs-on: macos-14
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [aarch64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: encrypted-secrets-zip
+      - name: Load AJW configuration
+        uses: ./.github/actions/decrypt-secrets
+        with:
+          zip_password: ${{ secrets.ZIP_PASSWORD }}
+      - name: Download existing Mac build
+        uses: actions/download-artifact@v4
+        with:
+          name: AJW-Remote-Support-macOS-${{ matrix.arch }}
+          run-id: 39452127941
+          github-token: ${{ github.token }}
+          path: original
+      - name: Extract app from existing disk image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=$(find original -name '*.dmg' -print | head -n 1)
+          test -n "$image"
+          mkdir -p "$RUNNER_TEMP/ajw-mount" staging
+          hdiutil attach "$image" -readonly -nobrowse -mountpoint "$RUNNER_TEMP/ajw-mount"
+          trap 'hdiutil detach "$RUNNER_TEMP/ajw-mount" || true' EXIT
+          app=$(find "$RUNNER_TEMP/ajw-mount" -maxdepth 1 -name '*.app' -print | head -n 1)
+          test -n "$app"
+          ditto "$app" "staging/AJW Remote Support.app"
+      - name: Embed and verify attended support configuration
+        shell: python
+        env:
+          AJW_CUSTOM: ${{ env.custom }}
+        run: |
+          import base64, json, os, plistlib
+          from pathlib import Path
+          value = os.environ['AJW_CUSTOM'].strip()
+          data = json.loads(base64.b64decode(value))
+          assert data['conn-type'] == 'incoming', 'Incoming-only mode is required'
+          assert data['disable-installation'] == 'Y', 'Installation must be disabled'
+          opts = data['override-settings']
+          assert opts['verification-method'] == 'use-temporary-password'
+          assert opts['custom-rendezvous-server'] == 'rustdesk.drnasdaq.com'
+          app = Path('staging/AJW Remote Support.app')
+          resources = app / 'Contents/Resources'
+          resources.mkdir(parents=True, exist_ok=True)
+          (resources / 'custom_.txt').write_text(value, encoding='utf-8')
+          assert (resources / 'custom_.txt').read_text() == value
+          info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+          assert (app / 'Contents/MacOS' / info['CFBundleExecutable']).is_file()
+          print('Verified incoming-only configuration in Contents/Resources/custom_.txt')
+      - name: Sign repaired app and package DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          xattr -cr 'staging/AJW Remote Support.app'
+          codesign --force --deep --sign - 'staging/AJW Remote Support.app'
+          codesign --verify --deep --strict 'staging/AJW Remote Support.app'
+          ln -s /Applications staging/Applications
+          hdiutil create -volname 'AJW Remote Support' -srcfolder staging -format UDZO -ov 'AJW-Remote-Support-${{ matrix.arch }}-fixed.dmg'
+      - name: Upload corrected Mac client
+        uses: actions/upload-artifact@v4
+        with:
+          name: AJW-Remote-Support-macOS-${{ matrix.arch }}-fixed
+          path: AJW-Remote-Support-${{ matrix.arch }}-fixed.dmg
+          if-no-files-found: error
+          retention-days: 30
+  cleanup:
+    needs: repair
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: geekyeggo/delete-artifact@v5
+        with:
+          name: encrypted-secrets-zip
+
