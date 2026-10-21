@@ -1,0 +1,95 @@
+name: Publish tested AJW support downloads
+run-name: Publish tested AJW support downloads
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Download tested Windows password client
+        uses: actions/download-artifact@v4
+        with:
+          name: AJW-Remote-Support-Windows
+          run-id: 39442490474
+          github-token: ${{ github.token }}
+          path: tested/windows
+      - name: Download tested Apple Silicon password client
+        uses: actions/download-artifact@v4
+        with:
+          name: AJW-Remote-Support-macOS-aarch64-fixed
+          run-id: 39524948900
+          github-token: ${{ github.token }}
+          path: tested/apple-silicon
+      - name: Download Intel password client from same repaired release
+        uses: actions/download-artifact@v4
+        with:
+          name: AJW-Remote-Support-macOS-x86_64-fixed
+          run-id: 39524948900
+          github-token: ${{ github.token }}
+          path: tested/intel
+      - name: Verify packages and prepare public files
+        shell: python
+        run: |
+          import base64, hashlib, json, shutil, zipfile
+          from pathlib import Path
+          out = Path('public-downloads')
+          out.mkdir()
+          windows = list(Path('tested/windows').glob('*.exe'))
+          assert len(windows) == 1, 'Expected exactly one Windows executable'
+          assert windows[0].read_bytes()[:2] == b'MZ', 'Invalid Windows executable'
+          shutil.copyfile(windows[0], out / 'AJW-Remote-Support-Windows.exe')
+          for folder, name in [('apple-silicon', 'Apple-Silicon'), ('intel', 'Intel')]:
+              files = list(Path('tested', folder).glob('*.zip'))
+              assert len(files) == 1, 'Expected one Mac app archive'
+              with zipfile.ZipFile(files[0]) as z:
+                  configs = [p for p in z.namelist() if p.endswith('.app/Contents/Resources/custom_.txt')]
+                  assert len(configs) == 1, 'Expected bundled Mac support configuration'
+                  cfg = json.loads(base64.b64decode(z.read(configs[0]).strip()))
+                  assert cfg['conn-type'] == 'incoming'
+                  assert cfg['disable-installation'] == 'Y'
+                  opts = cfg['override-settings']
+                  assert opts['approve-mode'] == 'password', 'Wrong approval mode; refuse publication'
+                  assert opts['verification-method'] == 'use-temporary-password'
+                  assert opts['custom-rendezvous-server'] == 'rustdesk.drnasdaq.com'
+              shutil.copyfile(files[0], out / ('AJW-Remote-Support-Mac-' + name + '.zip'))
+          manifest = ''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in sorted(out.iterdir()))
+          (out / 'SHA256SUMS.txt').write_text(manifest)
+          print('Verified password-based Mac packages; prepared Windows executable, two Mac ZIPs, and checksums.')
+      - name: Publish versioned public downloads
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const {owner, repo} = context.repo;
+            const tag = 'ajw-support-v1.0.0';
+            const body = [
+              'AJW Remote Support — one-time-password edition.',
+              '',
+              'Windows: download and open the .exe.',
+              'Mac: download the matching ZIP, extract the app, and move it to Applications. macOS Screen Recording and Accessibility permissions are required.',
+              '',
+              'Share your ID and one-time password only with AJW Technical Support. Quit the app when your support session is finished.',
+              '',
+              'Builds are not Developer ID notarized / publicly Authenticode signed; operating-system warnings may appear.',
+              '',
+              'Windows source build: Actions run 39442490474. Mac source builds: run 39452127941, configuration repair 39524948900. Intel packaging passed automated checks but has not been separately user-tested in this project.',
+              '',
+              'Based on RustDesk 1.5.0 (AGPL-3.0). Build workflows and branding: https://github.com/dfortunati81/rdgen. Upstream source: https://github.com/rustdesk/rustdesk/tree/1.5.0. Build workflow pins the upstream source and applies the branding/configuration patches. No server or employee installation changes are included.'
+            ].join('\n');
+            const release = await github.rest.repos.createRelease({owner, repo, tag_name:tag, target_commitish:context.sha, name:'AJW Remote Support 1.0 — Password edition', body, draft:true, prerelease:false});
+            for (const name of fs.readdirSync('public-downloads').sort()) {
+              const data = fs.readFileSync(path.join('public-downloads',name));
+              await github.rest.repos.uploadReleaseAsset({owner,repo,release_id:release.data.id,name,data,headers:{'content-type':name.endsWith('.exe')?'application/vnd.microsoft.portable-executable':name.endsWith('.zip')?'application/zip':'text/plain','content-length':data.length}});
+            }
+            const uploaded = await github.rest.repos.listReleaseAssets({owner,repo,release_id:release.data.id});
+            if(uploaded.data.length !== 4) throw new Error('Expected four uploaded release assets');
+            const published = await github.rest.repos.updateRelease({owner,repo,release_id:release.data.id,draft:false,make_latest:'false'});
+            core.summary.addHeading('AJW public downloads').addLink('View release',published.data.html_url);
+            for(const asset of uploaded.data) core.summary.addLink(asset.name,asset.browser_download_url).addRaw('\n');
+            await core.summary.write();
+
