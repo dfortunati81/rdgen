@@ -105,6 +105,7 @@ jobs:
         uses: ./.github/actions/decrypt-secrets
         with:
           zip_password: ${{ secrets.ZIP_PASSWORD }}
+          approval_mode: click
 
       - name: Finalize and Cleanup zip/json
         if: always() # Run even if previous steps fail
@@ -783,7 +784,7 @@ jobs:
       - name: Upload AJW Windows client
         uses: actions/upload-artifact@v4
         with:
-          name: AJW-Remote-Support-Windows
+          name: AJW-Remote-Support-Windows-Click-to-Accept
           path: ./SignOutput/*.exe
           if-no-files-found: error
           retention-days: 30
