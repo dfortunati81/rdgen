@@ -588,8 +588,9 @@ jobs:
           APP=$(find ./flutter/build/macos/Build/Products/Release -maxdepth 1 -name "*.app" | head -n 1)
           echo "App bundle: $APP"
           test -n "$APP"
-          printf '%s' "$AJW_CUSTOM" > "$APP/Contents/MacOS/custom_.txt"
-          ls -l "$APP/Contents/MacOS/custom_.txt"
+          mkdir -p "$APP/Contents/Resources"
+          printf '%s' "$AJW_CUSTOM" > "$APP/Contents/Resources/custom_.txt"
+          ls -l "$APP/Contents/Resources/custom_.txt"
       
       - name: Install rcodesign tool
         if: env.MACOS_P12_BASE64 != ''
