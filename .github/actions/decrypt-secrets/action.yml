@@ -6,6 +6,10 @@ inputs:
   zip_password:
     description: 'Password for the Zip'
     required: true
+  approval_mode:
+    description: 'Optional AJW attended-support approval override'
+    required: false
+    default: ''
   zip_path:
     description: 'Path to the encrypted zip'
     required: false
@@ -23,6 +27,7 @@ runs:
       shell: python
       env:
         ZIP_PASSWORD: ${{ inputs.zip_password }}
+        AJW_APPROVAL_MODE: ${{ inputs.approval_mode }}
         PYTHONUTF8: "1"
         PYTHONIOENCODING: "utf-8"
       run: |
@@ -31,6 +36,7 @@ runs:
         import pyzipper
         import json
         import os
+        import base64
 
         # Force UTF-8 output on Windows runners
         sys.stdout = io.TextIOWrapper(
@@ -55,6 +61,23 @@ runs:
 
             with zf.open('secrets.json') as f:
                 secrets = json.load(f)
+
+
+        # Opt in only from the client workflows being changed.
+        if os.environ.get('AJW_APPROVAL_MODE') == 'click':
+            custom = json.loads(base64.b64decode(secrets['custom']))
+            if custom.get('conn-type') != 'incoming':
+                raise ValueError('AJW support client must be incoming-only')
+            if custom.get('disable-installation') != 'Y':
+                raise ValueError('AJW support client installation must stay disabled')
+            options = custom.setdefault('override-settings', {})
+            options['approve-mode'] = 'click'
+            options['allow-logon-screen-password'] = 'N'
+            custom['disable-settings'] = 'Y'
+            secrets['custom'] = base64.b64encode(
+                json.dumps(custom, separators=(',', ':')).encode('utf-8')
+            ).decode('ascii')
+            print('Applied click-only approval for the attended support client.')
 
         # Mask configuration values and export them
         # to the GitHub Actions environment
