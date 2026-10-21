@@ -26,6 +26,7 @@ jobs:
         uses: ./.github/actions/decrypt-secrets
         with:
           zip_password: ${{ secrets.ZIP_PASSWORD }}
+          approval_mode: click
       - name: Download existing Mac build
         uses: actions/download-artifact@v4
         with:
@@ -58,6 +59,8 @@ jobs:
           assert data['disable-installation'] == 'Y', 'Installation must be disabled'
           opts = data['override-settings']
           assert opts['verification-method'] == 'use-temporary-password'
+          assert opts['approve-mode'] == 'click'
+          assert opts['allow-logon-screen-password'] == 'N'
           assert opts['custom-rendezvous-server'] == 'rustdesk.drnasdaq.com'
           app = Path('staging/AJW Remote Support.app')
           resources = app / 'Contents/Resources'
@@ -75,12 +78,12 @@ jobs:
           codesign --force --deep --sign - 'staging/AJW Remote Support.app'
           codesign --verify --deep --strict 'staging/AJW Remote Support.app'
           ln -s /Applications staging/Applications
-          ditto -c -k --sequesterRsrc --keepParent 'staging/AJW Remote Support.app' 'AJW-Remote-Support-${{ matrix.arch }}-fixed.zip'
+          ditto -c -k --sequesterRsrc --keepParent 'staging/AJW Remote Support.app' 'AJW-Remote-Support-${{ matrix.arch }}-click-to-accept.zip'
       - name: Upload corrected Mac client
         uses: actions/upload-artifact@v4
         with:
-          name: AJW-Remote-Support-macOS-${{ matrix.arch }}-fixed
-          path: AJW-Remote-Support-${{ matrix.arch }}-fixed.zip
+          name: AJW-Remote-Support-macOS-${{ matrix.arch }}-click-to-accept
+          path: AJW-Remote-Support-${{ matrix.arch }}-click-to-accept.zip
           if-no-files-found: error
           retention-days: 30
   cleanup:
