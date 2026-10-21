@@ -67,7 +67,7 @@ jobs:
           info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
           assert (app / 'Contents/MacOS' / info['CFBundleExecutable']).is_file()
           print('Verified incoming-only configuration in Contents/Resources/custom_.txt')
-      - name: Sign repaired app and package DMG
+      - name: Sign repaired app and package ZIP
         shell: bash
         run: |
           set -euo pipefail
@@ -75,12 +75,12 @@ jobs:
           codesign --force --deep --sign - 'staging/AJW Remote Support.app'
           codesign --verify --deep --strict 'staging/AJW Remote Support.app'
           ln -s /Applications staging/Applications
-          hdiutil create -volname 'AJW Remote Support' -srcfolder staging -format UDZO -ov 'AJW-Remote-Support-${{ matrix.arch }}-fixed.dmg'
+          ditto -c -k --sequesterRsrc --keepParent 'staging/AJW Remote Support.app' 'AJW-Remote-Support-${{ matrix.arch }}-fixed.zip'
       - name: Upload corrected Mac client
         uses: actions/upload-artifact@v4
         with:
           name: AJW-Remote-Support-macOS-${{ matrix.arch }}-fixed
-          path: AJW-Remote-Support-${{ matrix.arch }}-fixed.dmg
+          path: AJW-Remote-Support-${{ matrix.arch }}-fixed.zip
           if-no-files-found: error
           retention-days: 30
   cleanup:
